@@ -218,7 +218,7 @@ endif
 " the :cwindow command.
 " (This code was derived from 'grep.vim'.)
 if !exists("g:Gtags_OpenQuickfixWindow")
-    let g:Gtags_OpenQuickfixWindow = 1
+    let g:Gtags_OpenQuickfixWindow = 6
 endif
 
 if !exists("g:Gtags_VerticalWindow")
@@ -424,11 +424,12 @@ function! s:ExecLoad(option, long_option, pattern, flags)
     endif
 
     " Open the quickfix window
-    if g:Gtags_OpenQuickfixWindow == 1
+    if g:Gtags_OpenQuickfixWindow >= 0
         if g:Gtags_VerticalWindow == 1
-            topleft vertical copen
+            execute 'topleft vertical copen ' . g:Gtags_OpenQuickfixWindow
         else
-            botright copen
+            execute 'botright copen ' . g:Gtags_OpenQuickfixWindow
+
         endif
     endif
     " Parse the output of 'global -x or -t' and show in the quickfix window.
@@ -536,7 +537,7 @@ if g:Gtags_Auto_Update == 1
 endif
 " Suggested map:
 if g:Gtags_Auto_Map == 1
-	:nmap <F2> :copen<CR>
+	:nmap <F2> :exe 'copen '.g:Gtags_OpenQuickfixWindow<CR>
 	:nmap <F4> :cclose<CR>
 	:nmap <F5> :Gtags<SPACE>
 	:nmap <F6> :Gtags -f %<CR>

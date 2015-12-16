@@ -1,11 +1,11 @@
 " File: gtags.vim
 " Author: Tama Communications Corporation
-" Version: 0.6.7
-" Last Modified: July 30, 2014
+" Version: 0.6.8
+" Last Modified: Nov 9, 2015
 "
 " Copyright and license
 " ---------------------
-" Copyright (c) 2004, 2008, 2010, 2011, 2012, 2014
+" Copyright (c) 2004, 2008, 2010, 2011, 2012, 2014, 2015
 " Tama Communications Corporation
 "
 " This file is part of GNU GLOBAL.
@@ -193,6 +193,7 @@
 " Gtags_Auto_Map          use a suggested key-mapping
 " Gtags_Auto_Update       keep tag files up-to-date automatically
 " Gtags_No_Auto_Jump      don't jump to the first tag at the time of search
+" Gtags_Close_When_Single close quickfix windows in case of single tag
 "
 " You can use the variables like follows:
 "
@@ -218,7 +219,7 @@ endif
 " the :cwindow command.
 " (This code was derived from 'grep.vim'.)
 if !exists("g:Gtags_OpenQuickfixWindow")
-    let g:Gtags_OpenQuickfixWindow = 6
+    let g:Gtags_OpenQuickfixWindow = 1
 endif
 
 if !exists("g:Gtags_VerticalWindow")
@@ -233,12 +234,17 @@ if !exists("g:Gtags_Auto_Update")
     let g:Gtags_Auto_Update = 0
 endif
 
+" 'Dont_Jump_Automatically' is deprecated.
 if !exists("g:Gtags_No_Auto_Jump")
     if !exists("g:Dont_Jump_Automatically")
 	let g:Gtags_No_Auto_Jump = 0
     else
 	let g:Gtags_No_Auto_Jump = g:Dont_Jump_Automatically
     endif
+endif
+
+if !exists("g:Gtags_Close_When_Single")
+    let g:Gtags_Close_When_Single = 0
 endif
 
 " -- ctags-x format 
@@ -424,12 +430,21 @@ function! s:ExecLoad(option, long_option, pattern, flags)
     endif
 
     " Open the quickfix window
-    if g:Gtags_OpenQuickfixWindow >= 0
-        if g:Gtags_VerticalWindow == 1
-            execute 'topleft vertical copen ' . g:Gtags_OpenQuickfixWindow
+    if g:Gtags_OpenQuickfixWindow == 1
+	let l:open = 1
+        if g:Gtags_Close_When_Single == 1
+	    let l:open = 0
+	    let l:idx = stridx(l:result, "\n")
+	    if l:idx > 0 && stridx(l:result, "\n", l:idx + 1) > 0
+		let l:open = 1
+	    endif
+	endif
+	if l:open == 0
+	    cclose
+        elseif g:Gtags_VerticalWindow == 1
+            topleft vertical copen
         else
-            execute 'botright copen ' . g:Gtags_OpenQuickfixWindow
-
+            botright copen
         endif
     endif
     " Parse the output of 'global -x or -t' and show in the quickfix window.
@@ -537,7 +552,7 @@ if g:Gtags_Auto_Update == 1
 endif
 " Suggested map:
 if g:Gtags_Auto_Map == 1
-	:nmap <F2> :exe 'copen '.g:Gtags_OpenQuickfixWindow<CR>
+	:nmap <F2> :copen<CR>
 	:nmap <F4> :cclose<CR>
 	:nmap <F5> :Gtags<SPACE>
 	:nmap <F6> :Gtags -f %<CR>

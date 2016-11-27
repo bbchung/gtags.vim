@@ -498,6 +498,13 @@ function! s:GtagsCursor()
     call s:ExecLoad('', l:option, l:pattern, '')
 endfunction
 
+function! s:GtagsRefCursor()
+    let l:pattern = expand("<cword>")
+    let l:option = "--from-here=\"" . line('.') . ":" . expand("%") . "\""
+    let l:option = '-r'
+    call s:ExecLoad('', l:option, l:pattern, '')
+endfunction
+
 "
 " Show the current position on mozilla.
 " (You need to execute htags(1) in your source directory.)
@@ -545,6 +552,7 @@ endfunction
 command! -nargs=* -complete=custom,GtagsCandidate Gtags call s:RunGlobal(<q-args>, '')
 command! -nargs=* -complete=custom,GtagsCandidate Gtagsa call s:RunGlobal(<q-args>, 'a')
 command! -nargs=0 GtagsCursor call s:GtagsCursor()
+command! -nargs=0 GtagsRefCursor call s:GtagsRefCursor()
 command! -nargs=0 Gozilla call s:Gozilla()
 command! -nargs=0 GtagsUpdate call s:GtagsAutoUpdate()
 if g:Gtags_Auto_Update == 1

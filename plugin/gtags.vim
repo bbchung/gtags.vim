@@ -404,6 +404,7 @@ endfunction
 " Execute global and load the result into quickfix window.
 "
 function! s:ExecLoad(option, long_option, pattern, flags)
+    call setqflist([], 'r')
     " Execute global(1) command and write the result to a temporary file.
     let l:isfile = 0
     let l:option = ''

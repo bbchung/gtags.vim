@@ -307,6 +307,7 @@ endfunction
 "
 function! s:Extract(line, target)
     let l:option = ''
+    let l:c = ''
     let l:pattern = ''
     let l:force_pattern = 0
     let l:length = strlen(a:line)

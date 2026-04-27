@@ -1,23 +1,27 @@
 local M = {}
 
+local api = vim.api
+local fn = vim.fn
+
 local state = {
+  did_setup = false,
   option = '',
   global_command = '',
 }
 
 local function is_windows()
-  return vim.fn.has('win32') == 1 or vim.fn.has('win16') == 1 or vim.fn.has('win95') == 1
+  return fn.has('win32') == 1 or fn.has('win16') == 1 or fn.has('win95') == 1
 end
 
 local function err(msg)
-  vim.api.nvim_echo({ { 'Error: ' .. msg, 'WarningMsg' } }, true, {})
+  api.nvim_echo({ { 'Error: ' .. msg, 'WarningMsg' } }, true, {})
 end
 
-local function extract(line, target)
+local function parse_command_line(line)
   line = line or ''
-  local option = ''
+  local option = {}
   local c = ''
-  local pattern = ''
+  local pattern
   local force_pattern = false
   local length = #line
   local i = 1
@@ -38,7 +42,7 @@ local function extract(line, target)
       else
         while i <= length and line:sub(i, i) ~= ' ' do
           c = line:sub(i, i)
-          option = option .. c
+          option[#option + 1] = c
           i = i + 1
         end
         if c == 'e' then
@@ -46,44 +50,30 @@ local function extract(line, target)
         end
       end
     else
-      pattern = ''
+      local pattern_parts = {}
       while i <= length do
         local ch = line:sub(i, i)
         if ch == "'" then
-          pattern = pattern .. vim.g.Gtags_Single_Quote_Char
+          pattern_parts[#pattern_parts + 1] = vim.g.Gtags_Single_Quote_Char
         elseif ch == '"' then
-          pattern = pattern .. vim.g.Gtags_Double_Quote_Char
+          pattern_parts[#pattern_parts + 1] = vim.g.Gtags_Double_Quote_Char
         else
-          pattern = pattern .. ch
+          pattern_parts[#pattern_parts + 1] = ch
         end
         i = i + 1
       end
-      if target == 'pattern' then
-        return pattern
-      end
+      pattern = table.concat(pattern_parts)
+      break
     end
     while i <= length and line:sub(i, i) == ' ' do
       i = i + 1
     end
   end
-  if target == 'option' then
-    return option
-  end
-  return ''
+  return table.concat(option), pattern or ''
 end
 
 local function trim_option(option)
-  local result = ''
-  local length = #option
-  local i = 1
-  while i <= length do
-    local c = option:sub(i, i)
-    if not c:match('[cenpquv]') then
-      result = result .. c
-    end
-    i = i + 1
-  end
-  return result
+  return option:gsub('[cenpquv]', '')
 end
 
 local function global_command(option)
@@ -91,22 +81,41 @@ local function global_command(option)
   if option and option ~= '' then
     opt = ' ' .. option
   end
-  if vim.g.Gtags_Emacs_Like_Mode == 1 and vim.fn.expand('%') ~= '' then
-    local dir = vim.fn.shellescape(vim.fn.expand('%:p:h'))
+  local current_file = fn.expand('%')
+  if vim.g.Gtags_Emacs_Like_Mode == 1 and current_file ~= '' then
+    local dir = fn.shellescape(fn.expand('%:p:h'))
     return 'cd ' .. dir .. ' && ' .. state.global_command .. opt
   end
   return state.global_command .. opt
 end
 
+local function file_candidates(lead)
+  local pattern
+  if fn.isdirectory(lead) == 1 then
+    if lead:match('/$') then
+      pattern = lead .. '*'
+    else
+      pattern = lead .. '/*'
+    end
+  else
+    pattern = lead .. '*'
+  end
+  return fn.glob(pattern, false, true)
+end
+
+local function global_complete(lead)
+  return global_command() .. ' -c' .. state.option .. ' ' .. fn.shellescape(lead)
+end
+
 function M.exec_load(option, long_option, pattern, flags)
-  vim.fn.setqflist({}, 'r')
+  fn.setqflist({}, 'r')
   flags = flags or ''
   local isfile = false
   local opt = ''
 
   if option:find('f', 1, true) then
     isfile = true
-    if vim.fn.filereadable(pattern) == 0 then
+    if fn.filereadable(pattern) == 0 then
       err('File ' .. pattern .. ' not found.')
       return
     end
@@ -123,7 +132,7 @@ function M.exec_load(option, long_option, pattern, flags)
     cmd = global_command('--path-style=absolute') .. ' ' .. opt .. 'e ' .. quote .. pattern .. quote
   end
 
-  local result = vim.fn.system(cmd)
+  local lines = fn.systemlist(cmd)
   if vim.v.shell_error ~= 0 then
     if vim.v.shell_error == 2 then
       err('invalid arguments. please use the latest GLOBAL.')
@@ -134,7 +143,7 @@ function M.exec_load(option, long_option, pattern, flags)
     end
     return
   end
-  if result == '' then
+  if #lines == 0 then
     if opt:find('f', 1, true) then
       err('Tag not found in ' .. pattern .. '.')
     elseif opt:find('P', 1, true) then
@@ -147,14 +156,19 @@ function M.exec_load(option, long_option, pattern, flags)
     return
   end
 
+  local efm_org = vim.o.errorformat
+  vim.o.errorformat = vim.g.Gtags_Efm
+  if flags:find('a', 1, true) then
+    fn.setqflist({}, 'a', { lines = lines })
+  else
+    fn.setqflist({}, 'r', { lines = lines })
+  end
+  vim.o.errorformat = efm_org
+
   if vim.g.Gtags_OpenQuickfixWindow == 1 then
     local open = true
     if vim.g.Gtags_Close_When_Single == 1 then
-      open = false
-      local first = result:find('\n', 1, true)
-      if first and result:find('\n', first + 1, true) then
-        open = true
-      end
+      open = #lines > 1
     end
     if not open then
       vim.cmd('cclose')
@@ -165,41 +179,32 @@ function M.exec_load(option, long_option, pattern, flags)
     end
   end
 
-  local efm_org = vim.o.errorformat
-  vim.o.errorformat = vim.g.Gtags_Efm
-  local lines = vim.split(result, '\n', { trimempty = true })
-  if flags:find('a', 1, true) then
-    vim.fn.setqflist({}, 'a', { lines = lines })
-  elseif vim.g.Gtags_No_Auto_Jump == 1 then
-    vim.fn.setqflist({}, 'r', { lines = lines })
-  else
-    vim.fn.setqflist({}, 'r', { lines = lines })
+  if not flags:find('a', 1, true) and vim.g.Gtags_No_Auto_Jump ~= 1 then
     vim.cmd('cfirst')
   end
-  vim.o.errorformat = efm_org
 end
 
 function M.run_global(line, flags)
-  local pattern = extract(line, 'pattern')
+  local option, pattern = parse_command_line(line)
   if pattern == '%' then
-    pattern = vim.fn.expand('%')
+    pattern = fn.expand('%')
   elseif pattern == '#' then
-    pattern = vim.fn.expand('#')
+    pattern = fn.expand('#')
   end
-  local option = extract(line, 'option')
   if pattern == '' then
     state.option = option
     local input_line
     if option:find('f', 1, true) then
-      input_line = vim.fn.input('Gtags for file: ', vim.fn.expand('%'), 'file')
+      input_line = fn.input('Gtags for file: ', fn.expand('%'), 'file')
     else
-      input_line = vim.fn.input(
+      input_line = fn.input(
         'Gtags for pattern: ',
-        vim.fn.expand('<cword>'),
+        fn.expand('<cword>'),
         'custom,v:lua.GtagsCandidateCore'
       )
     end
-    pattern = extract(input_line, 'pattern')
+    local _, input_pattern = parse_command_line(input_line)
+    pattern = input_pattern
     if pattern == '' then
       err('Pattern not specified.')
       return
@@ -209,54 +214,45 @@ function M.run_global(line, flags)
 end
 
 function M.gtags_cursor()
-  local pattern = vim.fn.expand('<cword>')
-  local option = string.format('--from-here="%s:%s"', vim.fn.line('.'), vim.fn.expand('%'))
+  local pattern = fn.expand('<cword>')
+  local option = string.format('--from-here="%s:%s"', fn.line('.'), fn.expand('%'))
   M.exec_load('', option, pattern, '')
 end
 
 function M.gozilla()
-  local lineno = vim.fn.line('.')
-  local filename = vim.fn.expand('%')
+  local lineno = fn.line('.')
+  local filename = fn.expand('%')
   local cmd
-  if vim.g.Gtags_Emacs_Like_Mode == 1 and vim.fn.expand('%') ~= '' then
-    local dir = vim.fn.shellescape(vim.fn.expand('%:p:h'))
+  if vim.g.Gtags_Emacs_Like_Mode == 1 and filename ~= '' then
+    local dir = fn.shellescape(fn.expand('%:p:h'))
     cmd = 'cd ' .. dir .. ' && gozilla'
   else
     cmd = 'gozilla'
   end
-  vim.fn.system(cmd .. ' +' .. lineno .. ' ' .. filename)
+  fn.system(cmd .. ' +' .. lineno .. ' ' .. fn.shellescape(filename))
 end
 
 function M.auto_update()
-  vim.fn.system(global_command() .. ' -u --single-update="' .. vim.fn.expand('%') .. '"')
+  fn.system(global_command() .. ' -u --single-update=' .. fn.shellescape(fn.expand('%')))
 end
 
 function M.candidate_core(lead, line, pos)
   if state.option == 'g' then
     return ''
   elseif state.option == 'f' then
-    local pattern
-    if vim.fn.isdirectory(lead) == 1 then
-      if lead:match('/$') then
-        pattern = lead .. '*'
-      else
-        pattern = lead .. '/*'
-      end
-    else
-      pattern = lead .. '*'
-    end
-    return vim.fn.glob(pattern)
+    return table.concat(file_candidates(lead), '\n')
   end
-  return vim.fn.system(global_command() .. ' ' .. '-c' .. state.option .. ' ' .. lead)
+  return fn.system(global_complete(lead))
 end
 
 function M.command_complete(arg_lead, cmd_line, cursor_pos)
-  state.option = extract(cmd_line, 'option')
-  local result = M.candidate_core(arg_lead, cmd_line, cursor_pos)
-  if result == '' then
+  state.option = parse_command_line(cmd_line)
+  if state.option == 'g' then
     return {}
+  elseif state.option == 'f' then
+    return file_candidates(arg_lead)
   end
-  return vim.split(result, '\n', { trimempty = true })
+  return fn.systemlist(global_complete(arg_lead))
 end
 
 local function setup_globals()
@@ -324,8 +320,8 @@ end
 
 local function create_autocmd()
   if vim.g.Gtags_Auto_Update == 1 then
-    local group = vim.api.nvim_create_augroup('GtagsAutoUpdate', { clear = true })
-    vim.api.nvim_create_autocmd('BufWritePost', {
+    local group = api.nvim_create_augroup('GtagsAutoUpdate', { clear = true })
+    api.nvim_create_autocmd('BufWritePost', {
       group = group,
       pattern = '*',
       callback = function()
@@ -351,24 +347,27 @@ local function create_maps()
 end
 
 local function create_commands()
-  vim.api.nvim_create_user_command('Gtags', function(opts)
+  api.nvim_create_user_command('Gtags', function(opts)
     M.run_global(opts.args, '')
-  end, { nargs = '*', complete = M.command_complete })
-  vim.api.nvim_create_user_command('Gtagsa', function(opts)
+  end, { nargs = '*', complete = M.command_complete, force = true })
+  api.nvim_create_user_command('Gtagsa', function(opts)
     M.run_global(opts.args, 'a')
-  end, { nargs = '*', complete = M.command_complete })
-  vim.api.nvim_create_user_command('GtagsCursor', function()
+  end, { nargs = '*', complete = M.command_complete, force = true })
+  api.nvim_create_user_command('GtagsCursor', function()
     M.gtags_cursor()
-  end, { nargs = 0 })
-  vim.api.nvim_create_user_command('Gozilla', function()
+  end, { nargs = 0, force = true })
+  api.nvim_create_user_command('Gozilla', function()
     M.gozilla()
-  end, { nargs = 0 })
-  vim.api.nvim_create_user_command('GtagsUpdate', function()
+  end, { nargs = 0, force = true })
+  api.nvim_create_user_command('GtagsUpdate', function()
     M.auto_update()
-  end, { nargs = 0 })
+  end, { nargs = 0, force = true })
 end
 
 function M.setup()
+  if state.did_setup then
+    return
+  end
   setup_globals()
   _G.GtagsCandidateCore = function(lead, line, pos)
     return M.candidate_core(lead, line, pos)
@@ -376,6 +375,8 @@ function M.setup()
   create_commands()
   create_autocmd()
   create_maps()
+  vim.g.loaded_gtags = 1
+  state.did_setup = true
 end
 
 return M

@@ -7,6 +7,9 @@ local state = {
   did_setup = false,
   option = '',
   global_command = '',
+  update_job = nil,
+  update_order = {},
+  update_queue = {},
 }
 
 local function is_windows()
@@ -105,6 +108,75 @@ end
 
 local function global_complete(lead)
   return global_command() .. ' -c' .. state.option .. ' ' .. fn.shellescape(lead)
+end
+
+local function update_file(file)
+  if file and file ~= '' then
+    return fn.fnamemodify(file, ':p')
+  end
+  return fn.expand('%:p')
+end
+
+local function update_command(file)
+  local cmd = state.global_command .. ' -u --single-update=' .. fn.shellescape(file)
+  if vim.g.Gtags_Emacs_Like_Mode == 1 and file ~= '' then
+    return 'cd ' .. fn.shellescape(fn.fnamemodify(file, ':p:h')) .. ' && ' .. cmd
+  end
+  return cmd
+end
+
+local function next_update()
+  local file = table.remove(state.update_order, 1)
+  if not file then
+    return nil
+  end
+
+  local item = state.update_queue[file]
+  state.update_queue[file] = nil
+  return item
+end
+
+local start_update
+
+local function enqueue_update(file)
+  file = update_file(file)
+  if file == '' then
+    return false
+  end
+
+  if not state.update_queue[file] then
+    state.update_order[#state.update_order + 1] = file
+  end
+  state.update_queue[file] = {
+    command = update_command(file),
+  }
+  return true
+end
+
+start_update = function()
+  if state.update_job then
+    return
+  end
+
+  local item = next_update()
+  if not item then
+    return
+  end
+
+  local job = fn.jobstart(item.command, {
+    detach = false,
+    on_exit = vim.schedule_wrap(function(_, _)
+      state.update_job = nil
+      start_update()
+    end),
+  })
+
+  if job <= 0 then
+    state.update_job = nil
+    start_update()
+    return
+  end
+  state.update_job = job
 end
 
 function M.exec_load(option, long_option, pattern, flags)
@@ -232,8 +304,10 @@ function M.gozilla()
   fn.system(cmd .. ' +' .. lineno .. ' ' .. fn.shellescape(filename))
 end
 
-function M.auto_update()
-  fn.system(global_command() .. ' -u --single-update=' .. fn.shellescape(fn.expand('%')))
+function M.auto_update(file)
+  if enqueue_update(file) then
+    start_update()
+  end
 end
 
 function M.candidate_core(lead, line, pos)
@@ -324,8 +398,8 @@ local function create_autocmd()
     api.nvim_create_autocmd('BufWritePost', {
       group = group,
       pattern = '*',
-      callback = function()
-        M.auto_update()
+      callback = function(args)
+        M.auto_update(args.file)
       end,
     })
   end
